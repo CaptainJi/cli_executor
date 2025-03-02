@@ -10,3 +10,6 @@ ENV/
 .DS_Store
 pyproject.toml
 setup.cfg
+dist/
+cli_executor_mcp.egg-info/
+cli_executor/

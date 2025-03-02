@@ -42,11 +42,11 @@ pip install cli-executor-mcp
 ### 作为命令行工具运行
 
 ```bash
-# 使用stdio传输（默认）
+# 使用sse传输（默认）
 cli-executor-mcp
 
-# 使用SSE传输
-cli-executor-mcp --transport sse
+# 使用stdio传输
+cli-executor-mcp --transport stdio
 
 # 启用调试模式
 cli-executor-mcp --debug
