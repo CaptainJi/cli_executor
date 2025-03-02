@@ -12,11 +12,8 @@ import argparse
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
-# 创建MCP服务器
-mcp = FastMCP("CLI Executor")
-
-@mcp.tool()
-async def execute_command(command: str, working_dir: Optional[str] = None) -> str:
+# 定义工具、资源和提示函数，稍后将它们注册到FastMCP实例
+async def execute_command_tool(command: str, working_dir: Optional[str] = None) -> str:
     """执行CLI命令并返回结果"""
     try:
         # 设置工作目录
@@ -42,8 +39,7 @@ async def execute_command(command: str, working_dir: Optional[str] = None) -> st
     except Exception as e:
         return f"执行命令时出错: {str(e)}"
 
-@mcp.tool()
-async def execute_script(script: str, working_dir: Optional[str] = None) -> str:
+async def execute_script_tool(script: str, working_dir: Optional[str] = None) -> str:
     """执行一个多行脚本并返回结果"""
     try:
         # 设置工作目录
@@ -81,8 +77,7 @@ async def execute_script(script: str, working_dir: Optional[str] = None) -> str:
     except Exception as e:
         return f"执行脚本时出错: {str(e)}"
 
-@mcp.tool()
-def list_directory(path: Optional[str] = None) -> str:
+def list_directory_tool(path: Optional[str] = None) -> str:
     """列出指定目录的内容"""
     try:
         # 设置目录路径
@@ -105,8 +100,7 @@ def list_directory(path: Optional[str] = None) -> str:
     except Exception as e:
         return f"列出目录内容时出错: {str(e)}"
 
-@mcp.resource("system://info")
-def get_system_info() -> str:
+def get_system_info_resource() -> str:
     """获取系统信息"""
     try:
         # 获取系统信息
@@ -134,8 +128,7 @@ def get_system_info() -> str:
     except Exception as e:
         return f"获取系统信息时出错: {str(e)}"
 
-@mcp.prompt()
-def deploy_app(app_name: str, target_dir: str) -> str:
+def deploy_app_prompt(app_name: str, target_dir: str) -> str:
     """创建一个部署应用的提示"""
     return f"""
 我需要部署应用 {app_name} 到 {target_dir} 目录。
@@ -150,13 +143,44 @@ def deploy_app(app_name: str, target_dir: str) -> str:
 请使用CLI命令执行这些任务。
 """
 
-if __name__ == "__main__":
+def create_mcp_server(server_settings=None):
+    """创建并配置MCP服务器实例"""
+    # 创建MCP服务器实例
+    mcp_server = FastMCP("CLI Executor", **(server_settings or {}))
+    
+    # 注册工具
+    mcp_server.add_tool(execute_command_tool, name="execute_command", 
+                        description="执行CLI命令并返回结果")
+    mcp_server.add_tool(execute_script_tool, name="execute_script", 
+                        description="执行一个多行脚本并返回结果")
+    mcp_server.add_tool(list_directory_tool, name="list_directory", 
+                        description="列出指定目录的内容")
+    
+    # 注册资源
+    mcp_server.resource("system://info")(get_system_info_resource)
+    
+    # 注册提示
+    mcp_server.prompt()(deploy_app_prompt)
+    
+    return mcp_server
+
+def main():
+    # 从环境变量获取默认值
+    default_port = int(os.environ.get("CLI_EXECUTOR_PORT", "8000"))
+    default_host = os.environ.get("CLI_EXECUTOR_HOST", "0.0.0.0")
+    default_transport = os.environ.get("CLI_EXECUTOR_TRANSPORT", "sse")
+    default_debug = os.environ.get("CLI_EXECUTOR_DEBUG", "").lower() in ("true", "1", "yes")
+    
     # 添加命令行参数解析
     parser = argparse.ArgumentParser(description="CLI Executor MCP Server")
-    parser.add_argument("--transport", type=str, default="sse", choices=["stdio", "sse"], 
-                        help="传输类型: stdio 或 sse (默认: sse)")
-    parser.add_argument("--debug", action="store_true", 
+    parser.add_argument("--transport", type=str, default=default_transport, choices=["stdio", "sse"], 
+                        help=f"传输类型: stdio 或 sse (默认: {default_transport})")
+    parser.add_argument("--debug", action="store_true", default=default_debug,
                         help="启用调试模式")
+    parser.add_argument("--port", type=int, default=default_port,
+                        help=f"SSE服务器端口号 (默认: {default_port})")
+    parser.add_argument("--host", type=str, default=default_host,
+                        help=f"SSE服务器主机地址 (默认: {default_host})")
     
     args = parser.parse_args()
     
@@ -168,20 +192,27 @@ if __name__ == "__main__":
     # 运行MCP服务器
     try:
         if args.transport == "sse":
-            print(f"启动SSE服务器，监听端口 {args.port}...")
-            # 查看FastMCP.run()方法的文档，了解正确的参数
-            import inspect
-            print(inspect.signature(mcp.run))
-            print(inspect.getdoc(mcp.run))
-            # 打印实际使用的参数值
-            print(f"实际使用的参数: transport={args.transport}, port={args.port}")
+            print(f"启动SSE服务器，监听地址: {args.host}:{args.port}...")
+            # 创建带有自定义设置的FastMCP实例
+            server_settings = {
+                "host": args.host,
+                "port": args.port,
+                "debug": args.debug,
+                "log_level": "DEBUG" if args.debug else "INFO"
+            }
+            # 创建并配置MCP服务器
+            mcp_server = create_mcp_server(server_settings)
             
             # 启动SSE服务器
-            mcp.run(transport="sse")
+            mcp_server.run(transport="sse")
         else:
             print("启动stdio服务器...")
-            print(f"实际使用的参数: transport={args.transport}")
-            mcp.run(transport="stdio")
+            # 创建并配置MCP服务器（使用默认设置）
+            mcp_server = create_mcp_server()
+            mcp_server.run(transport="stdio")
     except Exception as e:
         print(f"启动服务器时出错: {e}")
-        sys.exit(1) 
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main() 
