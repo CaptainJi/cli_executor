@@ -50,6 +50,36 @@ cli-executor-mcp --transport stdio
 
 # 启用调试模式
 cli-executor-mcp --debug
+
+# 指定端口号
+cli-executor-mcp --port 9000
+
+# 指定主机地址
+cli-executor-mcp --host 127.0.0.1
+
+# 同时指定主机地址和端口号
+cli-executor-mcp --host 127.0.0.1 --port 9000
+```
+
+### 环境变量配置
+
+您也可以通过环境变量来配置CLI Executor MCP：
+
+- `CLI_EXECUTOR_PORT`: 设置SSE服务器端口号（默认：8000）
+- `CLI_EXECUTOR_HOST`: 设置SSE服务器主机地址（默认：0.0.0.0）
+- `CLI_EXECUTOR_TRANSPORT`: 设置传输类型，可选值为"stdio"或"sse"（默认："sse"）
+- `CLI_EXECUTOR_DEBUG`: 启用调试模式，可选值为"true"、"1"或"yes"（默认：禁用）
+
+例如：
+
+```bash
+# 设置环境变量
+export CLI_EXECUTOR_PORT=9000
+export CLI_EXECUTOR_HOST=127.0.0.1
+export CLI_EXECUTOR_DEBUG=true
+
+# 运行服务器（将使用上面设置的环境变量）
+cli-executor-mcp
 ```
 
 ### 在Claude Desktop中安装
