@@ -8,7 +8,7 @@
 
 ## 概述
 
-CLI Executor MCP是一个基于[Model Context Protocol (MCP)](https://modelcontextprotocol.io)的服务器，它提供了执行CLI命令的工具，使LLM（如Claude）能够执行系统命令、部署应用程序和管理系统。
+CLI Executor MCP是一个基于[Model Context Protocol (MCP)](https://modelcontextprotocol.io)的服务，它提供了执行CLI命令的工具，使LLM（如Cursor、Claude）能够执行系统命令、部署应用程序和管理系统。
 
 主要功能：
 
