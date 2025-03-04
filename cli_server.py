@@ -167,6 +167,8 @@ def deploy_app_prompt(app_name: str, target_dir: str) -> str:
 5. 启动应用
 
 请使用CLI命令执行这些任务。
+如果命令比较危险例如rm -rf，请先进行确认
+如果命令因处理时间过长而超时，请使用nohup运行命令，并使用tail -f nohup.out查看结果直至命令执行完毕
 """
 
 def create_mcp_server(server_settings=None):
