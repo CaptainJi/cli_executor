@@ -9,12 +9,16 @@ import subprocess
 import os
 import sys
 import argparse
-from typing import Optional
+import time
+from typing import Optional, Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 # 定义工具、资源和提示函数，稍后将它们注册到FastMCP实例
 async def execute_command_tool(command: str, working_dir: Optional[str] = None) -> str:
-    """执行CLI命令并返回结果"""
+    """执行CLI命令并返回结果
+       如果命令比较危险例如rm -rf，请先进行确认
+       如果命令因处理时间过长而超时，请使用nohup运行命令，并使用tail -f nohup.out查看结果直至命令执行完毕
+    """
     try:
         # 设置工作目录
         cwd = working_dir if working_dir else os.getcwd()
@@ -42,17 +46,27 @@ async def execute_command_tool(command: str, working_dir: Optional[str] = None) 
 async def execute_script_tool(script: str, working_dir: Optional[str] = None) -> str:
     """执行一个多行脚本并返回结果"""
     try:
+        import platform
+        
         # 设置工作目录
         cwd = working_dir if working_dir else os.getcwd()
         
-        # 创建临时脚本文件
-        script_path = os.path.join(cwd, "temp_script.sh")
-        with open(script_path, "w") as f:
-            f.write("#!/bin/bash\nset -e\n")  # 添加shebang和错误时退出
-            f.write(script)
+        # 根据操作系统创建临时脚本文件
+        is_windows = platform.system() == "Windows"
+        if is_windows:
+            script_path = os.path.join(cwd, "temp_script.bat")
+            with open(script_path, "w") as f:
+                f.write("@echo off\n")  # Windows批处理文件头
+                f.write(script)
+        else:
+            script_path = os.path.join(cwd, "temp_script.sh")
+            with open(script_path, "w") as f:
+                f.write("#!/bin/bash\nset -e\n")  # 添加shebang和错误时退出
+                f.write(script)
         
-        # 设置执行权限
-        os.chmod(script_path, 0o755)
+        # 设置执行权限（仅在非Windows系统上需要）
+        if not is_windows:
+            os.chmod(script_path, 0o755)
         
         # 执行脚本
         process = await asyncio.create_subprocess_shell(
@@ -67,7 +81,10 @@ async def execute_script_tool(script: str, working_dir: Optional[str] = None) ->
         stdout, stderr = await process.communicate()
         
         # 删除临时脚本
-        os.remove(script_path)
+        try:
+            os.remove(script_path)
+        except Exception:
+            pass  # 忽略删除临时文件的错误
         
         # 返回结果
         if process.returncode == 0:
@@ -103,23 +120,32 @@ def list_directory_tool(path: Optional[str] = None) -> str:
 def get_system_info_resource() -> str:
     """获取系统信息"""
     try:
+        import platform
+        
         # 获取系统信息
-        uname = os.uname()
+        result = "系统信息:\n"
+        
+        # 使用platform模块获取系统信息（跨平台兼容）
+        result += f"系统名称: {platform.system()}\n"
+        result += f"主机名: {platform.node()}\n"
+        result += f"发行版本: {platform.release()}\n"
+        result += f"版本: {platform.version()}\n"
+        result += f"机器类型: {platform.machine()}\n"
+        
+        # 如果是类Unix系统，尝试获取更详细的信息
+        if platform.system() != "Windows":
+            try:
+                uname = os.uname()
+                result += f"系统详细信息: {uname.version}\n"
+            except AttributeError:
+                pass
         
         # 获取Python版本
         python_version = sys.version
+        result += f"Python版本: {python_version}\n"
         
         # 获取环境变量
         env_vars = {k: v for k, v in os.environ.items() if not k.startswith("_")}
-        
-        # 格式化输出
-        result = "系统信息:\n"
-        result += f"系统名称: {uname.sysname}\n"
-        result += f"主机名: {uname.nodename}\n"
-        result += f"发行版本: {uname.release}\n"
-        result += f"版本: {uname.version}\n"
-        result += f"机器类型: {uname.machine}\n"
-        result += f"Python版本: {python_version}\n"
         result += "\n环境变量:\n"
         for k, v in env_vars.items():
             result += f"{k}={v}\n"
@@ -146,7 +172,15 @@ def deploy_app_prompt(app_name: str, target_dir: str) -> str:
 def create_mcp_server(server_settings=None):
     """创建并配置MCP服务器实例"""
     # 创建MCP服务器实例
-    mcp_server = FastMCP("CLI Executor", **(server_settings or {}))
+    settings = {
+        "initialization_timeout": 60.0,  # 增加初始化超时时间到60秒
+        "request_queue_size": 100,  # 增加请求队列大小
+        "session_timeout": 300.0  # 会话超时时间设置为5分钟
+    }
+    if server_settings:
+        settings.update(server_settings)
+    
+    mcp_server = FastMCP("CLI Executor", **settings)
     
     # 注册工具
     mcp_server.add_tool(execute_command_tool, name="execute_command", 
@@ -164,12 +198,51 @@ def create_mcp_server(server_settings=None):
     
     return mcp_server
 
+async def wait_for_initialization(mcp_server, timeout=60):
+    """等待服务器初始化完成"""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if hasattr(mcp_server, "_initialized") and mcp_server._initialized:
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+def run_with_initialization_check(mcp_server, transport="sse", timeout=60):
+    """运行服务器并等待初始化完成"""
+    # 创建一个事件循环
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # 创建一个任务来运行服务器
+    server_task = loop.create_task(mcp_server._run_async(transport=transport))
+    
+    # 创建一个任务来等待初始化
+    init_task = loop.create_task(wait_for_initialization(mcp_server, timeout))
+    
+    try:
+        # 运行直到初始化完成或超时
+        init_result = loop.run_until_complete(init_task)
+        if not init_result:
+            print(f"警告: 服务器初始化超时 ({timeout}秒)，但将继续运行")
+        
+        # 继续运行服务器任务
+        loop.run_until_complete(server_task)
+    except KeyboardInterrupt:
+        print("接收到中断信号，正在关闭服务器...")
+    finally:
+        # 清理任务
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
+        loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
+        loop.close()
+
 def main():
     # 从环境变量获取默认值
     default_port = int(os.environ.get("CLI_EXECUTOR_PORT", "8000"))
     default_host = os.environ.get("CLI_EXECUTOR_HOST", "0.0.0.0")
     default_transport = os.environ.get("CLI_EXECUTOR_TRANSPORT", "sse")
     default_debug = os.environ.get("CLI_EXECUTOR_DEBUG", "").lower() in ("true", "1", "yes")
+    default_max_retries = int(os.environ.get("CLI_EXECUTOR_MAX_RETRIES", "3"))
     
     # 添加命令行参数解析
     parser = argparse.ArgumentParser(description="CLI Executor MCP Server")
@@ -181,6 +254,8 @@ def main():
                         help=f"SSE服务器端口号 (默认: {default_port})")
     parser.add_argument("--host", type=str, default=default_host,
                         help=f"SSE服务器主机地址 (默认: {default_host})")
+    parser.add_argument("--max-retries", type=int, default=default_max_retries,
+                        help=f"服务器启动失败时的最大重试次数 (默认: {default_max_retries})")
     
     args = parser.parse_args()
     
@@ -190,29 +265,37 @@ def main():
         logging.basicConfig(level=logging.DEBUG)
     
     # 运行MCP服务器
-    try:
-        if args.transport == "sse":
-            print(f"启动SSE服务器，监听地址: {args.host}:{args.port}...")
-            # 创建带有自定义设置的FastMCP实例
-            server_settings = {
-                "host": args.host,
-                "port": args.port,
-                "debug": args.debug,
-                "log_level": "DEBUG" if args.debug else "INFO"
-            }
-            # 创建并配置MCP服务器
-            mcp_server = create_mcp_server(server_settings)
-            
-            # 启动SSE服务器
-            mcp_server.run(transport="sse")
-        else:
-            print("启动stdio服务器...")
-            # 创建并配置MCP服务器（使用默认设置）
-            mcp_server = create_mcp_server()
-            mcp_server.run(transport="stdio")
-    except Exception as e:
-        print(f"启动服务器时出错: {e}")
-        sys.exit(1)
+    retry_count = 0
+    while retry_count < args.max_retries:
+        try:
+            if args.transport == "sse":
+                print(f"启动SSE服务器，监听地址: {args.host}:{args.port}...")
+                # 创建带有自定义设置的FastMCP实例
+                server_settings = {
+                    "host": args.host,
+                    "port": args.port,
+                    "debug": args.debug,
+                    "log_level": "DEBUG" if args.debug else "INFO"
+                }
+                # 创建并配置MCP服务器
+                mcp_server = create_mcp_server(server_settings)
+                
+                # 使用带有初始化检查的运行方法
+                run_with_initialization_check(mcp_server, transport="sse", timeout=60)
+            else:
+                print("启动stdio服务器...")
+                # 创建并配置MCP服务器（使用默认设置）
+                mcp_server = create_mcp_server()
+                run_with_initialization_check(mcp_server, transport="stdio", timeout=60)
+            break  # 如果成功启动，跳出循环
+        except Exception as e:
+            retry_count += 1
+            print(f"启动服务器时出错 (尝试 {retry_count}/{args.max_retries}): {e}")
+            if retry_count >= args.max_retries:
+                print(f"达到最大重试次数 ({args.max_retries})，退出程序")
+                sys.exit(1)
+            print(f"等待5秒后重试...")
+            time.sleep(5)
 
 if __name__ == "__main__":
     main() 
