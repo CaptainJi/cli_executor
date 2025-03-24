@@ -23,23 +23,39 @@ async def execute_command_tool(command: str, working_dir: Optional[str] = None) 
         # 设置工作目录
         cwd = working_dir if working_dir else os.getcwd()
         
-        # 使用asyncio创建子进程
+        # 使用asyncio创建子进程，将stderr重定向到stdout
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,  # 将stderr重定向到stdout
             cwd=cwd,
-            shell=True
+            shell=True,
+            env=os.environ.copy()  # 保持环境变量
         )
         
-        # 获取输出
-        stdout, stderr = await process.communicate()
+        # 用于存储所有输出
+        output_lines = []
+        
+        # 实时读取输出
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            # 解码并保留所有格式化字符
+            decoded_line = line.decode('utf-8', errors='replace')
+            output_lines.append(decoded_line)
+        
+        # 等待进程完成
+        await process.wait()
+        
+        # 合并所有输出
+        full_output = ''.join(output_lines)
         
         # 返回结果
         if process.returncode == 0:
-            return f"命令执行成功:\n{stdout.decode('utf-8', errors='replace')}"
+            return f"命令执行成功:\n{full_output}"
         else:
-            return f"命令执行失败 (返回码: {process.returncode}):\n{stderr.decode('utf-8', errors='replace')}"
+            return f"命令执行失败 (返回码: {process.returncode}):\n{full_output}"
     except Exception as e:
         return f"执行命令时出错: {str(e)}"
 
