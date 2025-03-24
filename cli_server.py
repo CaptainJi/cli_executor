@@ -216,7 +216,7 @@ def run_with_initialization_check(mcp_server, transport="sse", timeout=60):
     asyncio.set_event_loop(loop)
     
     # 创建一个任务来运行服务器
-    server_task = loop.create_task(mcp_server._run_async(transport=transport))
+    server_task = loop.create_task(mcp_server.run(transport=transport))
     
     # 创建一个任务来等待初始化
     init_task = loop.create_task(wait_for_initialization(mcp_server, timeout))
