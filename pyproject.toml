@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cli-executor-mcp"
+version = "0.4.11"
+authors = [
+    {name = "CaptainJi", email = "jiqing19861123@163.com"},
+]
+description = "MCP服务器，用于执行CLI命令进行系统部署和管理"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "mcp>=1.5.0",
+    "asyncio",
+    "uvicorn",
+    "starlette",
+    "sse-starlette",
+]
+
+[tool.setuptools]
+packages = ["cli_executor"]
+
+[project.scripts]
+cli-executor-mcp = "cli_executor.cli_server:main"
+
+[project.urls]
+"Homepage" = "https://github.com/CaptainJi/cli_executor"
+"Bug Tracker" = "https://github.com/CaptainJi/cli_executor/issues" 
