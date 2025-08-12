@@ -22,6 +22,74 @@ except ImportError:
 
 import fastmcp
 
+# 输出长度控制常量
+MAX_OUTPUT_LENGTH = 8000  # 最大输出字符数（约对应GPT-4的2K tokens）
+MAX_LINES = 200  # 最大行数
+TRUNCATE_MARKER = "\n\n... (输出已截断，共显示前{}行，总长度{}字符) ..."
+SUMMARY_MARKER = "\n\n📊 **输出统计**: 总行数: {}, 总字符数: {}, 已截断: {}"
+
+def truncate_output(text: str, max_length: int = MAX_OUTPUT_LENGTH, max_lines: int = MAX_LINES) -> str:
+    """
+    智能截断输出文本，保持可读性。
+    
+    参数:
+        text: 要截断的文本
+        max_length: 最大字符数
+        max_lines: 最大行数
+    
+    返回:
+        截断后的文本
+    """
+    if not text:
+        return text
+    
+    original_length = len(text)
+    original_lines = text.count('\n') + 1
+    
+    # 如果文本长度和行数都在限制内，直接返回
+    if len(text) <= max_length and original_lines <= max_lines:
+        return text
+    
+    lines = text.split('\n')
+    truncated_lines = lines[:max_lines]
+    truncated_text = '\n'.join(truncated_lines)
+    
+    # 如果截断后的文本仍然超过字符限制，进一步截断
+    if len(truncated_text) > max_length:
+        truncated_text = truncated_text[:max_length]
+        # 确保不截断在单词中间
+        last_newline = truncated_text.rfind('\n')
+        if last_newline > max_length * 0.8:  # 如果最后一个换行符在80%位置之后
+            truncated_text = truncated_text[:last_newline]
+    
+    # 添加截断标记
+    truncate_info = TRUNCATE_MARKER.format(
+        len(truncated_lines),
+        len(truncated_text)
+    )
+    
+    # 添加统计信息
+    summary_info = SUMMARY_MARKER.format(
+        original_lines,
+        original_length,
+        "是" if original_lines > max_lines or original_length > max_length else "否"
+    )
+    
+    return truncated_text + truncate_info + summary_info
+
+def is_likely_binary_output(data: bytes) -> bool:
+    """
+    检测输出是否可能是二进制数据。
+    """
+    if not data:
+        return False
+    
+    # 检查是否包含大量不可打印字符
+    printable_count = sum(1 for byte in data if 32 <= byte <= 126 or byte in [9, 10, 13])
+    printable_ratio = printable_count / len(data)
+    
+    return printable_ratio < 0.7  # 如果可打印字符少于70%，认为是二进制
+
 # 创建FastMCP服务器实例
 mcp = fastmcp.FastMCP(
     "CLI Executor",
@@ -149,55 +217,71 @@ async def execute_command(
             if debug_enabled:
                 logger.debug(f"🔍 开始解码标准输出，原始长度: {len(stdout)} 字节")
             
-            # 尝试多种编码方式
-            decoded_stdout = None
-            for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
-                try:
-                    decoded_stdout = stdout.decode(encoding).strip()
-                    if debug_enabled:
-                        logger.debug(f"✅ 使用编码 {encoding} 成功解码标准输出")
-                    break
-                except UnicodeDecodeError:
-                    if debug_enabled:
-                        logger.debug(f"❌ 编码 {encoding} 解码失败，尝试下一个")
-                    continue
-            
-            if decoded_stdout is None:
-                decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+            # 检查是否为二进制输出
+            if is_likely_binary_output(stdout):
                 if debug_enabled:
-                    logger.warning(f"⚠️ 所有编码都失败，使用replace模式解码")
-            
-            if decoded_stdout:
-                if debug_enabled:
-                    logger.debug(f"📝 标准输出内容: {decoded_stdout[:100]}{'...' if len(decoded_stdout) > 100 else ''}")
-                output_parts.append(f"标准输出:\n{decoded_stdout}")
+                    logger.debug(f"⚠️ 检测到可能的二进制输出，跳过解码")
+                output_parts.append(f"标准输出:\n[二进制数据，长度: {len(stdout)} 字节]")
+            else:
+                # 尝试多种编码方式
+                decoded_stdout = None
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                    try:
+                        decoded_stdout = stdout.decode(encoding).strip()
+                        if debug_enabled:
+                            logger.debug(f"✅ 使用编码 {encoding} 成功解码标准输出")
+                        break
+                    except UnicodeDecodeError:
+                        if debug_enabled:
+                            logger.debug(f"❌ 编码 {encoding} 解码失败，尝试下一个")
+                        continue
+                
+                if decoded_stdout is None:
+                    decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+                    if debug_enabled:
+                        logger.warning(f"⚠️ 所有编码都失败，使用replace模式解码")
+                
+                if decoded_stdout:
+                    if debug_enabled:
+                        logger.debug(f"📝 标准输出内容: {decoded_stdout[:100]}{'...' if len(decoded_stdout) > 100 else ''}")
+                    # 应用输出长度控制
+                    truncated_stdout = truncate_output(decoded_stdout)
+                    output_parts.append(f"标准输出:\n{truncated_stdout}")
         
         if stderr:
             if debug_enabled:
                 logger.debug(f"🔍 开始解码错误输出，原始长度: {len(stderr)} 字节")
             
-            # 尝试多种编码方式
-            decoded_stderr = None
-            for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
-                try:
-                    decoded_stderr = stderr.decode(encoding).strip()
-                    if debug_enabled:
-                        logger.debug(f"✅ 使用编码 {encoding} 成功解码错误输出")
-                    break
-                except UnicodeDecodeError:
-                    if debug_enabled:
-                        logger.debug(f"❌ 编码 {encoding} 解码失败，尝试下一个")
-                    continue
-            
-            if decoded_stderr is None:
-                decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+            # 检查是否为二进制输出
+            if is_likely_binary_output(stderr):
                 if debug_enabled:
-                    logger.warning(f"⚠️ 所有编码都失败，使用replace模式解码")
-            
-            if decoded_stderr:
-                if debug_enabled:
-                    logger.debug(f"📝 错误输出内容: {decoded_stderr[:100]}{'...' if len(decoded_stderr) > 100 else ''}")
-                output_parts.append(f"错误输出:\n{decoded_stderr}")
+                    logger.debug(f"⚠️ 检测到可能的二进制错误输出，跳过解码")
+                output_parts.append(f"错误输出:\n[二进制数据，长度: {len(stderr)} 字节]")
+            else:
+                # 尝试多种编码方式
+                decoded_stderr = None
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                    try:
+                        decoded_stderr = stderr.decode(encoding).strip()
+                        if debug_enabled:
+                            logger.debug(f"✅ 使用编码 {encoding} 成功解码错误输出")
+                        break
+                    except UnicodeDecodeError:
+                        if debug_enabled:
+                            logger.debug(f"❌ 编码 {encoding} 解码失败，尝试下一个")
+                        continue
+                
+                if decoded_stderr is None:
+                    decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+                    if debug_enabled:
+                        logger.warning(f"⚠️ 所有编码都失败，使用replace模式解码")
+                
+                if decoded_stderr:
+                    if debug_enabled:
+                        logger.debug(f"📝 错误输出内容: {decoded_stderr[:100]}{'...' if len(decoded_stderr) > 100 else ''}")
+                    # 应用输出长度控制
+                    truncated_stderr = truncate_output(decoded_stderr)
+                    output_parts.append(f"错误输出:\n{truncated_stderr}")
         
         if not output_parts:
             if debug_enabled:
@@ -207,6 +291,9 @@ async def execute_command(
         result = "\n\n".join(output_parts)
         if process.returncode != 0:
             result = f"命令执行失败 (退出码: {process.returncode})\n\n{result}"
+        
+        # 对最终结果也应用长度控制
+        result = truncate_output(result)
         
         if debug_enabled:
             logger.debug(f"🎯 命令执行完成，返回结果长度: {len(result)} 字符")
@@ -310,36 +397,48 @@ async def execute_script(
             # 格式化输出
             output_parts = []
             if stdout:
-                # 尝试多种编码方式
-                decoded_stdout = None
-                for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
-                    try:
-                        decoded_stdout = stdout.decode(encoding).strip()
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                
-                if decoded_stdout is None:
-                    decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
-                
-                if decoded_stdout:
-                    output_parts.append(f"标准输出:\n{decoded_stdout}")
+                # 检查是否为二进制输出
+                if is_likely_binary_output(stdout):
+                    output_parts.append(f"标准输出:\n[二进制数据，长度: {len(stdout)} 字节]")
+                else:
+                    # 尝试多种编码方式
+                    decoded_stdout = None
+                    for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                        try:
+                            decoded_stdout = stdout.decode(encoding).strip()
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    if decoded_stdout is None:
+                        decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+                    
+                    if decoded_stdout:
+                        # 应用输出长度控制
+                        truncated_stdout = truncate_output(decoded_stdout)
+                        output_parts.append(f"标准输出:\n{truncated_stdout}")
             
             if stderr:
-                # 尝试多种编码方式
-                decoded_stderr = None
-                for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
-                    try:
-                        decoded_stderr = stderr.decode(encoding).strip()
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                
-                if decoded_stderr is None:
-                    decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
-                
-                if decoded_stderr:
-                    output_parts.append(f"错误输出:\n{decoded_stderr}")
+                # 检查是否为二进制输出
+                if is_likely_binary_output(stderr):
+                    output_parts.append(f"错误输出:\n[二进制数据，长度: {len(stderr)} 字节]")
+                else:
+                    # 尝试多种编码方式
+                    decoded_stderr = None
+                    for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                        try:
+                            decoded_stderr = stderr.decode(encoding).strip()
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    if decoded_stderr is None:
+                        decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+                    
+                    if decoded_stderr:
+                        # 应用输出长度控制
+                        truncated_stderr = truncate_output(decoded_stderr)
+                        output_parts.append(f"错误输出:\n{truncated_stderr}")
             
             if not output_parts:
                 status = "成功" if process.returncode == 0 else "失败"
@@ -350,6 +449,9 @@ async def execute_script(
                 result = f"脚本执行失败 (退出码: {process.returncode})\n\n{result}"
             else:
                 result = f"脚本执行成功\n\n{result}"
+            
+            # 对最终结果也应用长度控制
+            result = truncate_output(result)
             
             return result
             
@@ -437,6 +539,9 @@ def list_directory(path: Optional[str] = None, show_hidden: bool = False) -> str
                     result += f"❓ [其他] {item.name}\n"
             except (OSError, PermissionError):
                 result += f"❌ [错误] {item.name} (权限被拒绝)\n"
+        
+        # 应用输出长度控制
+        result = truncate_output(result)
         
         return result
         
