@@ -50,10 +50,14 @@ async def execute_command(
         - 对于危险命令如'rm -rf'，请在执行前确认
         - 对于长时间运行的命令，使用'nohup'并用'tail -f'监控
     """
-    # 尝试导入loguru用于调试日志
+    # 检查是否启用了调试模式
+    debug_enabled = False
     try:
-        from loguru import logger
-        debug_enabled = True
+        import sys
+        # 检查命令行参数中是否包含--debug
+        if '--debug' in sys.argv:
+            from loguru import logger
+            debug_enabled = True
     except ImportError:
         debug_enabled = False
     
@@ -232,10 +236,14 @@ async def execute_script(
     返回:
         脚本执行输出
     """
-    # 尝试导入loguru用于调试日志
+    # 检查是否启用了调试模式
+    debug_enabled = False
     try:
-        from loguru import logger
-        debug_enabled = True
+        import sys
+        # 检查命令行参数中是否包含--debug
+        if '--debug' in sys.argv:
+            from loguru import logger
+            debug_enabled = True
     except ImportError:
         debug_enabled = False
     
@@ -368,10 +376,14 @@ def list_directory(path: Optional[str] = None, show_hidden: bool = False) -> str
     返回:
         格式化的目录列表
     """
-    # 尝试导入loguru用于调试日志
+    # 检查是否启用了调试模式
+    debug_enabled = False
     try:
-        from loguru import logger
-        debug_enabled = True
+        import sys
+        # 检查命令行参数中是否包含--debug
+        if '--debug' in sys.argv:
+            from loguru import logger
+            debug_enabled = True
     except ImportError:
         debug_enabled = False
     
