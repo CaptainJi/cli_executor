@@ -561,6 +561,7 @@ def deploy_application(app_name: str, target_dir: str, repo_url: Optional[str] =
 def main():
     """CLI Executor MCP服务器的主入口点。"""
     import argparse
+    import sys  # 确保sys模块始终可用
     
     # 解析命令行参数
     parser = argparse.ArgumentParser(
