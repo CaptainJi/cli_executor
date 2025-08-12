@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cli-executor-mcp"
-version = "1.0.0"
+version = "1.0.1"
 authors = [
     {name = "CaptainJi", email = "jiqing19861123@163.com"},
 ]
