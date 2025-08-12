@@ -28,54 +28,307 @@ MAX_LINES = 200  # 最大行数
 TRUNCATE_MARKER = "\n\n... (输出已截断，共显示前{}行，总长度{}字符) ..."
 SUMMARY_MARKER = "\n\n📊 **输出统计**: 总行数: {}, 总字符数: {}, 已截断: {}"
 
-def truncate_output(text: str, max_length: int = MAX_OUTPUT_LENGTH, max_lines: int = MAX_LINES) -> str:
+# 可配置的截断设置
+class TruncateConfig:
+    """输出截断配置类"""
+    def __init__(self):
+        self.max_length = MAX_OUTPUT_LENGTH
+        self.max_lines = MAX_LINES
+        self.preserve_errors = True  # 是否优先保留错误信息
+        self.smart_truncate = True  # 是否使用智能截断
+        self.truncation_mode = "smart"  # 截断模式: smart, summary_only, essential, none
+    
+    def set_max_length(self, length: int):
+        """设置最大输出长度"""
+        self.max_length = max(1000, min(length, 50000))  # 限制在合理范围内
+    
+    def set_max_lines(self, lines: int):
+        """设置最大行数"""
+        self.max_lines = max(50, min(lines, 1000))  # 限制在合理范围内
+    
+    def disable_truncate(self):
+        """禁用截断（谨慎使用）"""
+        self.max_length = 50000
+        self.max_lines = 1000
+        self.truncation_mode = "none"
+    
+    def set_truncation_mode(self, mode: str):
+        """设置截断模式"""
+        if mode in ["smart", "summary_only", "essential", "none"]:
+            self.truncation_mode = mode
+
+# 全局截断配置实例
+truncate_config = TruncateConfig()
+
+def configure_truncation(max_length: int = None, max_lines: int = None, preserve_errors: bool = None, truncation_mode: str = None):
     """
-    智能截断输出文本，保持可读性。
+    配置输出截断参数
+    
+    参数:
+        max_length: 最大输出字符数
+        max_lines: 最大行数
+        preserve_errors: 是否优先保留错误信息
+        truncation_mode: 截断模式 (smart, summary_only, essential, none)
+    """
+    # 总是更新所有参数，因为工具传递的是实际值而不是None
+    if max_length is not None:
+        truncate_config.set_max_length(max_length)
+    if max_lines is not None:
+        truncate_config.set_max_lines(max_lines)
+    if preserve_errors is not None:
+        truncate_config.preserve_errors = preserve_errors
+    if truncation_mode is not None:
+        truncate_config.set_truncation_mode(truncation_mode)
+
+def create_content_summary(text: str, max_summary_length: int = 200) -> str:
+    """
+    创建文本内容的智能摘要，帮助LLM理解被截断内容的上下文。
+    
+    参数:
+        text: 原文本
+        max_summary_length: 摘要最大长度
+    
+    返回:
+        内容摘要
+    """
+    lines = text.strip().split('\n')
+    total_lines = len(lines)
+    total_chars = len(text)
+    
+    # 统计关键信息
+    error_count = sum(1 for line in lines if any(keyword in line.lower() for keyword in ['error', 'fail', 'exception', 'failed']))
+    warning_count = sum(1 for line in lines if 'warning' in line.lower())
+    file_count = sum(1 for line in lines if any(line.strip().endswith(ext) for ext in ['.py', '.js', '.json', '.yml', '.yaml', '.txt']))
+    
+    # 提取关键行（错误、标题、总结性内容）
+    key_lines = []
+    for i, line in enumerate(lines[:min(50, len(lines))]):
+        line_lower = line.lower().strip()
+        if any(keyword in line_lower for keyword in ['error', 'fail', 'success', 'result', 'summary', 'total']):
+            key_lines.append(f"L{i+1}: {line.strip()}")
+        elif line.startswith('===') or line.startswith('---') or line.startswith('#'):
+            key_lines.append(f"L{i+1}: {line.strip()}")
+    
+    # 提取最后几行的错误信息
+    tail_lines = []
+    for i in range(min(5, len(lines))):
+        idx = -(i + 1)
+        if abs(idx) <= len(lines):
+            line = lines[idx].strip()
+            if line and len(line) < 100:
+                tail_lines.append(line)
+    
+    summary_parts = [f"📊 内容摘要 (共{total_lines}行, {total_chars}字符)"]
+    
+    if error_count > 0:
+        summary_parts.append(f"❌ 发现{error_count}个错误")
+    if warning_count > 0:
+        summary_parts.append(f"⚠️  发现{warning_count}个警告")
+    if file_count > 0:
+        summary_parts.append(f"📁 涉及{file_count}个文件")
+    
+    if key_lines:
+        summary_parts.append("🔍 关键信息:")
+        summary_parts.extend(key_lines[:3])  # 最多3条关键信息
+    
+    if tail_lines and not error_count:
+        summary_parts.append("📝 结尾内容:")
+        summary_parts.extend(tail_lines[-2:])
+    
+    summary = '\n'.join(summary_parts)
+    if len(summary) > max_summary_length:
+        summary = summary[:max_summary_length-3] + "..."
+    
+    return summary
+
+class TruncationMetadata:
+    """截断元数据，帮助LLM理解输出状态"""
+    def __init__(self, original_length: int, original_lines: int, truncated_length: int, 
+                 truncated_lines: int, truncation_mode: str, command_type: str = None):
+        self.original_length = original_length
+        self.original_lines = original_lines
+        self.truncated_length = truncated_length
+        self.truncated_lines = truncated_lines
+        self.truncation_mode = truncation_mode
+        self.command_type = command_type
+        self.was_truncated = original_length > truncated_length or original_lines > truncated_lines
+    
+    def to_dict(self) -> dict:
+        return {
+            "original_length": self.original_length,
+            "original_lines": self.original_lines,
+            "truncated_length": self.truncated_length,
+            "truncated_lines": self.truncated_lines,
+            "truncation_mode": self.truncation_mode,
+            "command_type": self.command_type,
+            "was_truncated": self.was_truncated,
+            "compression_ratio": self.truncated_length / max(self.original_length, 1)
+        }
+
+def truncate_output(text: str, max_length: int = None, max_lines: int = None, command_type: str = None) -> str:
+    """
+    智能截断输出文本，保持LLM可理解性。
     
     参数:
         text: 要截断的文本
-        max_length: 最大字符数
-        max_lines: 最大行数
+        max_length: 最大字符数（可选，默认使用全局配置）
+        max_lines: 最大行数（可选，默认使用全局配置）
+        command_type: 命令类型，用于自适应截断策略
     
     返回:
-        截断后的文本
+        截断后的文本，包含上下文摘要
     """
     if not text:
         return text
     
+    # 使用全局配置或传入的参数
+    max_length = max_length or truncate_config.max_length
+    max_lines = max_lines or truncate_config.max_lines
+    
     original_length = len(text)
     original_lines = text.count('\n') + 1
     
-    # 如果文本长度和行数都在限制内，直接返回
+    # 创建元数据对象
+    metadata = TruncationMetadata(original_length, original_lines, original_length, 
+                                 original_lines, truncate_config.truncation_mode, command_type)
+    
+    # 如果文本在限制内，直接返回
     if len(text) <= max_length and original_lines <= max_lines:
         return text
     
+    # 根据命令类型调整截断策略
+    is_error_output = command_type and any(keyword in str(command_type).lower() for keyword in ['error', 'log', 'debug'])
+    is_listing = command_type and any(keyword in str(command_type).lower() for keyword in ['list', 'ls', 'find'])
+    
+    # 自适应调整限制
+    if is_error_output:
+        # 错误输出，保留更多信息
+        max_length = min(max_length * 1.5, 12000)
+        max_lines = min(max_lines * 1.2, 300)
+    elif is_listing:
+        # 列表输出，可以压缩更多
+        max_length = max_length * 0.8
+        max_lines = max_lines * 0.8
+    
     lines = text.split('\n')
-    truncated_lines = lines[:max_lines]
-    truncated_text = '\n'.join(truncated_lines)
     
-    # 如果截断后的文本仍然超过字符限制，进一步截断
+    # 创建内容摘要
+    content_summary = create_content_summary(text)
+    
+    # 智能截断策略：分层保留重要信息
+    keep_start_lines = int(max_lines * 0.5)  # 保留开头
+    keep_end_lines = int(max_lines * 0.3)    # 保留结尾
+    
+    # 优先保留错误和关键信息
+    important_lines = []
+    context_lines = []
+    
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        if any(keyword in line_lower for keyword in ['error', 'fail', 'exception', 'failed', 'success', 'complete']):
+            important_lines.append((i, line))
+        elif i < keep_start_lines or i >= len(lines) - keep_end_lines:
+            context_lines.append((i, line))
+    
+    # 构建截断内容
+    selected_lines = []
+    seen_lines = set()
+    
+    # 先添加重要行
+    for idx, line in important_lines:
+        if len(selected_lines) < max_lines - 3:  # 留出空间给标记
+            selected_lines.append(line)
+            seen_lines.add(idx)
+    
+    # 再添加上下文行
+    for idx, line in context_lines:
+        if idx not in seen_lines and len(selected_lines) < max_lines - 2:
+            selected_lines.append(line)
+            seen_lines.add(idx)
+    
+    # 如果还有空间，添加中间内容的代表性样本
+    if len(selected_lines) < max_lines - 1:
+        step = max(1, len(lines) // (max_lines - len(selected_lines)))
+        for i in range(0, len(lines), step):
+            if i not in seen_lines and len(selected_lines) < max_lines - 1:
+                selected_lines.insert(-1, f"[...行{i+1}...] {lines[i][:50]}...")
+    
+    truncated_text = '\n'.join(selected_lines)
+    
+    # 字符级截断，但保留完整性
     if len(truncated_text) > max_length:
-        truncated_text = truncated_text[:max_length]
-        # 确保不截断在单词中间
-        last_newline = truncated_text.rfind('\n')
-        if last_newline > max_length * 0.8:  # 如果最后一个换行符在80%位置之后
-            truncated_text = truncated_text[:last_newline]
+        # 保留重要行的完整内容
+        final_lines = []
+        current_length = 0
+        
+        for line in selected_lines:
+            if current_length + len(line) + 1 <= max_length - 200:  # 留出摘要空间
+                final_lines.append(line)
+                current_length += len(line) + 1
+            else:
+                break
+        
+        truncated_text = '\n'.join(final_lines)
     
-    # 添加截断标记
-    truncate_info = TRUNCATE_MARKER.format(
-        len(truncated_lines),
-        len(truncated_text)
-    )
+    # 更新元数据
+    metadata.truncated_length = len(truncated_text)
+    metadata.truncated_lines = len(selected_lines)
     
-    # 添加统计信息
-    summary_info = SUMMARY_MARKER.format(
-        original_lines,
-        original_length,
-        "是" if original_lines > max_lines or original_length > max_length else "否"
-    )
+    # 根据截断模式处理输出
+    if truncate_config.truncation_mode == "none":
+        return text
+    elif truncate_config.truncation_mode == "summary_only":
+        # 仅显示摘要
+        return f"{content_summary}\n\n📊 内容摘要模式：完整内容已隐藏，使用 `configure_output_truncation` 调整显示"
+    elif truncate_config.truncation_mode == "essential":
+        # 仅显示关键信息
+        essential_info = [line for line in selected_lines if any(keyword in line.lower() for keyword in ['error', 'fail', 'success', 'complete'])]
+        if not essential_info:
+            essential_info = selected_lines[:3]  # 最多3行
+        
+        result_parts = [
+            "🎯 关键信息摘要:",
+            '\n'.join(essential_info),
+            content_summary
+        ]
+        return '\n\n'.join(result_parts)
     
-    return truncated_text + truncate_info + summary_info
+    # 构建最终输出（smart模式）
+    result_parts = []
+    
+    # 添加截断状态标记，帮助LLM理解
+    if metadata.was_truncated:
+        result_parts.append(f"⚠️ 输出已截断 ({metadata.truncated_length}/{metadata.original_length}字符, {metadata.truncated_lines}/{metadata.original_lines}行)")
+    
+    if len(truncated_text.strip()) > 0:
+        result_parts.append(truncated_text)
+    
+    # 添加内容摘要
+    result_parts.append(content_summary)
+    
+    # 添加结构化的截断元数据
+    meta_info = f"""📊 截断详情:
+- 原始: {original_lines}行, {original_length}字符
+- 显示: {len(selected_lines)}行, {len(truncated_text)}字符
+- 压缩率: {(len(truncated_text)/max(original_length,1)*100):.1f}%
+- 模式: {truncate_config.truncation_mode}
+- 命令类型: {command_type or '通用'}"""
+    result_parts.append(meta_info)
+    
+    # 添加上下文建议（仅对LLM可见的提示）
+    if metadata.was_truncated:
+        suggestions = []
+        if command_type and 'list' in str(command_type).lower():
+            suggestions.append("建议: 使用 `| head -n 20` 限制输出")
+        elif command_type and 'grep' in str(command_type).lower():
+            suggestions.append("建议: 使用 `| head -n 10` 或 `grep -m 5` 限制匹配")
+        elif command_type and any(cmd in str(command_type) for cmd in ['cat', 'tail']):
+            suggestions.append("建议: 使用 `| head -n 50` 限制行数")
+        
+        if suggestions:
+            result_parts.append(f"💡 LLM提示: {'; '.join(suggestions)}")
+    
+    return '\n\n'.join(result_parts)
 
 def is_likely_binary_output(data: bytes) -> bool:
     """
@@ -93,7 +346,7 @@ def is_likely_binary_output(data: bytes) -> bool:
 # 创建FastMCP服务器实例
 mcp = fastmcp.FastMCP(
     "CLI Executor",
-    version="1.0.0"
+    version="1.0.6"
 )
 
 
@@ -245,7 +498,7 @@ async def execute_command(
                     if debug_enabled:
                         logger.debug(f"📝 标准输出内容: {decoded_stdout[:100]}{'...' if len(decoded_stdout) > 100 else ''}")
                     # 应用输出长度控制
-                    truncated_stdout = truncate_output(decoded_stdout)
+                    truncated_stdout = truncate_output(decoded_stdout, command_type="execute_command")
                     output_parts.append(f"标准输出:\n{truncated_stdout}")
         
         if stderr:
@@ -280,7 +533,7 @@ async def execute_command(
                     if debug_enabled:
                         logger.debug(f"📝 错误输出内容: {decoded_stderr[:100]}{'...' if len(decoded_stderr) > 100 else ''}")
                     # 应用输出长度控制
-                    truncated_stderr = truncate_output(decoded_stderr)
+                    truncated_stderr = truncate_output(decoded_stderr, command_type="execute_command")
                     output_parts.append(f"错误输出:\n{truncated_stderr}")
         
         if not output_parts:
@@ -451,7 +704,7 @@ async def execute_script(
                 result = f"脚本执行成功\n\n{result}"
             
             # 对最终结果也应用长度控制
-            result = truncate_output(result)
+            result = truncate_output(result, command_type="execute_command")
             
             return result
             
@@ -464,6 +717,59 @@ async def execute_script(
                 
     except Exception as e:
         return f"执行脚本时出错: {str(e)}"
+
+
+@mcp.tool()
+def configure_output_truncation(
+    max_length: int = 8000,
+    max_lines: int = 200,
+    preserve_errors: bool = True,
+    truncation_mode: str = "smart"
+) -> str:
+    """
+    配置输出截断参数。
+    
+    参数:
+        max_length: 最大输出字符数（可选）
+        max_lines: 最大行数（可选）
+        preserve_errors: 是否优先保留错误信息（可选）
+        truncation_mode: 截断模式（可选）: smart, summary_only, essential, none
+    
+    返回:
+        配置结果信息
+    """
+    try:
+        # 直接调用configure_truncation函数更新所有参数
+        configure_truncation(max_length, max_lines, preserve_errors, truncation_mode)
+        
+        # 添加调试信息
+        debug_info = f"调试信息: max_length={max_length}, max_lines={max_lines}, preserve_errors={preserve_errors}, truncation_mode={truncation_mode}"
+        
+        result = "✅ 输出截断配置已更新:\n\n"
+        result += f"📏 最大字符数: {truncate_config.max_length}\n"
+        result += f"📄 最大行数: {truncate_config.max_lines}\n"
+        result += f"🛡️ 保留错误信息: {'是' if truncate_config.preserve_errors else '否'}\n"
+        result += f"🧠 智能截断: {'是' if truncate_config.smart_truncate else '否'}\n"
+        result += f"⚙️ 截断模式: {truncate_config.truncation_mode}\n\n"
+        result += f"🔍 {debug_info}\n\n"
+        
+        modes_info = {
+            "smart": "智能截断，保留关键信息和上下文",
+            "summary_only": "仅显示内容摘要，不显示详细内容",
+            "essential": "仅保留最重要的错误和状态信息",
+            "none": "禁用截断，可能导致大模型上下文溢出"
+        }
+        result += f"📖 模式说明: {modes_info.get(truncate_config.truncation_mode, '未知模式')}\n\n"
+        
+        if truncate_config.max_length >= 50000:
+            result += "⚠️ 警告: 已禁用输出截断，可能导致大模型上下文溢出\n"
+        elif truncate_config.max_length > 15000:
+            result += "💡 提示: 输出长度较大，建议监控大模型响应\n"
+        
+        return result
+        
+    except Exception as e:
+        return f"❌ 配置截断参数时出错: {str(e)}"
 
 
 @mcp.tool()

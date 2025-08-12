@@ -150,3 +150,6 @@ nohup.out
 
 # Kiro specific
 .kiro/
+
+# claude code
+CLAUDE.md
