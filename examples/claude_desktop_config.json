@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cli-executor": {
+      "command": "cli-executor-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

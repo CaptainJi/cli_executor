@@ -4,31 +4,36 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cli-executor-mcp"
-version = "0.4.11"
+version = "1.0.0"
 authors = [
     {name = "CaptainJi", email = "jiqing19861123@163.com"},
 ]
-description = "MCP服务器，用于执行CLI命令进行系统部署和管理"
+description = "基于FastMCP的MCP服务器，用于执行CLI命令"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "mcp>=1.5.0",
-    "asyncio",
-    "uvicorn",
-    "starlette",
-    "sse-starlette",
+    "fastmcp>=2.11.0",
+    "httpx>=0.24.0",
 ]
 
 [tool.setuptools]
 packages = ["cli_executor"]
 
 [project.scripts]
-cli-executor-mcp = "cli_executor.cli_server:main"
+cli-executor-mcp = "cli_executor.server:main"
 
 [project.urls]
 "Homepage" = "https://github.com/CaptainJi/cli_executor"

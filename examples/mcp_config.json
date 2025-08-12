@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cli-executor": {
+      "command": "cli-executor-mcp",
+      "args": ["--transport", "stdio"],
+      "env": {
+        "CLI_EXECUTOR_DEBUG": "false"
+      }
+    }
+  }
+}

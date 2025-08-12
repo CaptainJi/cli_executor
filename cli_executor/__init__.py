@@ -9,6 +9,6 @@ __version__ = "1.0.0"
 __author__ = "CaptainJi"
 __email__ = "jiqing19861123@163.com"
 
-from cli_executor import mcp
+from .server import mcp
 
-__all__ = ["mcp"] 
+__all__ = ["mcp"]
