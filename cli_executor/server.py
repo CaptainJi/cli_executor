@@ -50,6 +50,18 @@ async def execute_command(
         - 对于危险命令如'rm -rf'，请在执行前确认
         - 对于长时间运行的命令，使用'nohup'并用'tail -f'监控
     """
+    # 尝试导入loguru用于调试日志
+    try:
+        from loguru import logger
+        debug_enabled = True
+    except ImportError:
+        debug_enabled = False
+    
+    if debug_enabled:
+        logger.debug(f"🔧 开始执行命令: {command}")
+        logger.debug(f"📁 工作目录: {working_dir or '当前目录'}")
+        logger.debug(f"⏱️ 超时时间: {timeout}秒")
+    
     try:
         # 设置工作目录
         cwd = Path(working_dir) if working_dir else Path.cwd()
@@ -91,6 +103,10 @@ async def execute_command(
         else:
             env_cmd = command
         
+        if debug_enabled:
+            logger.debug(f"🚀 执行命令: {env_cmd}")
+            logger.debug(f"📂 工作目录: {cwd}")
+        
         # 执行命令并设置超时
         process = await asyncio.create_subprocess_shell(
             env_cmd,
@@ -100,12 +116,25 @@ async def execute_command(
             env=os.environ.copy()
         )
         
+        if debug_enabled:
+            logger.debug(f"⏳ 等待命令执行完成，超时时间: {timeout}秒")
+        
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), 
                 timeout=timeout
             )
+            
+            if debug_enabled:
+                logger.debug(f"✅ 命令执行完成，退出码: {process.returncode}")
+                if stdout:
+                    logger.debug(f"📤 标准输出长度: {len(stdout)} 字节")
+                if stderr:
+                    logger.debug(f"📤 错误输出长度: {len(stderr)} 字节")
+                    
         except asyncio.TimeoutError:
+            if debug_enabled:
+                logger.warning(f"⏰ 命令执行超时 ({timeout}秒)，强制终止进程")
             process.kill()
             await process.wait()
             return f"命令在 {timeout} 秒后超时。对于长时间运行的命令，请考虑使用 'nohup'。"
@@ -113,43 +142,70 @@ async def execute_command(
         # 格式化输出
         output_parts = []
         if stdout:
+            if debug_enabled:
+                logger.debug(f"🔍 开始解码标准输出，原始长度: {len(stdout)} 字节")
+            
             # 尝试多种编码方式
             decoded_stdout = None
             for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
                 try:
                     decoded_stdout = stdout.decode(encoding).strip()
+                    if debug_enabled:
+                        logger.debug(f"✅ 使用编码 {encoding} 成功解码标准输出")
                     break
                 except UnicodeDecodeError:
+                    if debug_enabled:
+                        logger.debug(f"❌ 编码 {encoding} 解码失败，尝试下一个")
                     continue
             
             if decoded_stdout is None:
                 decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+                if debug_enabled:
+                    logger.warning(f"⚠️ 所有编码都失败，使用replace模式解码")
             
             if decoded_stdout:
+                if debug_enabled:
+                    logger.debug(f"📝 标准输出内容: {decoded_stdout[:100]}{'...' if len(decoded_stdout) > 100 else ''}")
                 output_parts.append(f"标准输出:\n{decoded_stdout}")
         
         if stderr:
+            if debug_enabled:
+                logger.debug(f"🔍 开始解码错误输出，原始长度: {len(stderr)} 字节")
+            
             # 尝试多种编码方式
             decoded_stderr = None
             for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
                 try:
                     decoded_stderr = stderr.decode(encoding).strip()
+                    if debug_enabled:
+                        logger.debug(f"✅ 使用编码 {encoding} 成功解码错误输出")
                     break
                 except UnicodeDecodeError:
+                    if debug_enabled:
+                        logger.debug(f"❌ 编码 {encoding} 解码失败，尝试下一个")
                     continue
             
             if decoded_stderr is None:
                 decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+                if debug_enabled:
+                    logger.warning(f"⚠️ 所有编码都失败，使用replace模式解码")
             
             if decoded_stderr:
+                if debug_enabled:
+                    logger.debug(f"📝 错误输出内容: {decoded_stderr[:100]}{'...' if len(decoded_stderr) > 100 else ''}")
                 output_parts.append(f"错误输出:\n{decoded_stderr}")
         
         if not output_parts:
+            if debug_enabled:
+                logger.debug(f"✅ 命令执行成功，无输出内容，退出码: {process.returncode}")
             return f"命令执行成功 (退出码: {process.returncode})"
         
         result = "\n\n".join(output_parts)
         if process.returncode != 0:
             result = f"命令执行失败 (退出码: {process.returncode})\n\n{result}"
+        
+        if debug_enabled:
+            logger.debug(f"🎯 命令执行完成，返回结果长度: {len(result)} 字符")
         
         return result
         
@@ -176,6 +232,20 @@ async def execute_script(
     返回:
         脚本执行输出
     """
+    # 尝试导入loguru用于调试日志
+    try:
+        from loguru import logger
+        debug_enabled = True
+    except ImportError:
+        debug_enabled = False
+    
+    if debug_enabled:
+        logger.debug(f"🔧 开始执行脚本")
+        logger.debug(f"📁 工作目录: {working_dir or '当前目录'}")
+        logger.debug(f"🐚 使用shell: {shell}")
+        logger.debug(f"⏱️ 超时时间: {timeout}秒")
+        logger.debug(f"📝 脚本内容: {script[:100]}{'...' if len(script) > 100 else ''}")
+    
     try:
         # 设置工作目录
         cwd = Path(working_dir) if working_dir else Path.cwd()
@@ -298,6 +368,18 @@ def list_directory(path: Optional[str] = None, show_hidden: bool = False) -> str
     返回:
         格式化的目录列表
     """
+    # 尝试导入loguru用于调试日志
+    try:
+        from loguru import logger
+        debug_enabled = True
+    except ImportError:
+        debug_enabled = False
+    
+    if debug_enabled:
+        logger.debug(f"🔧 开始列出目录")
+        logger.debug(f"📁 目录路径: {path or '当前目录'}")
+        logger.debug(f"👁️ 显示隐藏文件: {show_hidden}")
+    
     try:
         # 设置目录路径
         dir_path = Path(path) if path else Path.cwd()
