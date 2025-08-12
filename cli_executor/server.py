@@ -113,12 +113,34 @@ async def execute_command(
         # 格式化输出
         output_parts = []
         if stdout:
-            decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+            # 尝试多种编码方式
+            decoded_stdout = None
+            for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                try:
+                    decoded_stdout = stdout.decode(encoding).strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if decoded_stdout is None:
+                decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+            
             if decoded_stdout:
                 output_parts.append(f"标准输出:\n{decoded_stdout}")
         
         if stderr:
-            decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+            # 尝试多种编码方式
+            decoded_stderr = None
+            for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                try:
+                    decoded_stderr = stderr.decode(encoding).strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if decoded_stderr is None:
+                decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+            
             if decoded_stderr:
                 output_parts.append(f"错误输出:\n{decoded_stderr}")
         
@@ -210,12 +232,34 @@ async def execute_script(
             # 格式化输出
             output_parts = []
             if stdout:
-                decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+                # 尝试多种编码方式
+                decoded_stdout = None
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                    try:
+                        decoded_stdout = stdout.decode(encoding).strip()
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                
+                if decoded_stdout is None:
+                    decoded_stdout = stdout.decode('utf-8', errors='replace').strip()
+                
                 if decoded_stdout:
                     output_parts.append(f"标准输出:\n{decoded_stdout}")
             
             if stderr:
-                decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+                # 尝试多种编码方式
+                decoded_stderr = None
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
+                    try:
+                        decoded_stderr = stderr.decode(encoding).strip()
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                
+                if decoded_stderr is None:
+                    decoded_stderr = stderr.decode('utf-8', errors='replace').strip()
+                
                 if decoded_stderr:
                     output_parts.append(f"错误输出:\n{decoded_stderr}")
             
@@ -479,11 +523,42 @@ def main():
     
     # 配置日志
     if args.debug:
-        import logging
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        try:
+            from loguru import logger
+            import sys
+            import os
+            
+            # 移除默认的日志处理器
+            logger.remove()
+            
+            # 添加自定义的日志处理器，支持中文和转义字符
+            logger.add(
+                sys.stderr,
+                format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+                level="DEBUG",
+                colorize=True,
+                backtrace=True,
+                diagnose=True,
+                enqueue=True,
+                catch=True
+            )
+            
+            # 设置环境变量以确保正确的编码
+            os.environ['PYTHONIOENCODING'] = 'utf-8'
+            
+            # 只使用loguru，不替换标准logging，避免与uvicorn冲突
+            logger.info("🔧 调试模式已启用，使用loguru进行日志记录")
+            logger.info("📝 日志将显示可读的中文字符和正确格式")
+            logger.info("🎨 支持彩色输出和结构化日志")
+            
+        except ImportError:
+            # 如果loguru不可用，回退到标准logging
+            import logging
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            print("⚠️  loguru未安装，使用标准logging。建议安装loguru: pip install loguru", file=sys.stderr)
     
     # 运行服务器
     try:
